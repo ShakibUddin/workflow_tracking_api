@@ -12,6 +12,7 @@ Express + Sequelize REST API using a controller → service → repository archi
 - **Winston** — logging (console in dev, `logs/combined.log` + `logs/error.log` always)
 - **swagger-jsdoc** + **swagger-ui-express** — API docs at `/api-docs`
 - **nodemon** — dev auto-reload
+- **Jest** + **Supertest** — integration tests against a real Postgres test database (see [Testing](#testing))
 
 ## Setup
 
