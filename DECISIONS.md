@@ -129,6 +129,28 @@ Fixed with a Postgres advisory lock (`pg_advisory_xact_lock`, keyed by `user_id`
 
 ---
 
+## CI / merge gate
+
+*(Q29-Q32 below were built independently on a separate branch, off bootstrap-only `main`, before this branch's auth work existed - merged in here, with Q30 updated to reflect that a Postgres service is now actually needed.)*
+
+### Q29: What runs before a PR can merge into `main`, and where is it defined?
+**A:** A GitHub Actions workflow (`.github/workflows/ci.yml`) triggered on every PR targeting `main` (and on direct pushes to `main`): install deps, `npm run lint` (ESLint), then `npm test` (Jest + Supertest, against a `postgres:16` service container - see Q30). No separate "build" step - there's nothing to compile in a plain Node/Express app, so a clean `npm ci` + passing lint + passing tests *is* the build check.
+Branch protection (requiring this workflow's check to pass, and requiring a PR before merging) is a GitHub *repository setting*, not something expressed in code - it has to be turned on once in GitHub's UI (Settings → Branches → branch protection rule for `main` → require the `lint-and-test` status check).
+
+### Q30: Does CI need a Postgres service container?
+**A:** Yes, as of this merge. The CI workflow was originally built (on a separate branch, off bootstrap-only `main`, before this auth work existed) for a codebase where nothing queried the database, so it shipped without one. That's no longer true - `tests/auth/*.test.js` (Q27) needs a real database for its `globalSetup`/`globalTeardown` to create - so merging this branch means adding the `postgres:16` service container (matching local `npm test`'s `DB_*` env vars) back into `ci.yml` as part of the merge itself, not as a follow-up.
+This is a concrete instance of the tradeoff named in the original decision: deferring infrastructure until it's needed works fine right up until something needs it, and then it has to actually get added - which is what happened here.
+
+### Q31: Why ESLint, and why the minimal `eslint:recommended` config instead of Airbnb/Standard?
+**A:** `eslint:recommended` (flat config, `eslint.config.js`) + Node globals, with one project-specific rule tweak: `no-unused-vars` ignores an unused `next` parameter, because Express identifies error-handling middleware purely by its 4-argument arity (`(err, req, res, next)`) - `next` must stay declared even when never called, or a middleware like `errorHandler.middleware.js` or `authenticate.middleware.js` silently stops being recognized as one.
+`eslint:recommended` only flags likely bugs (unused vars, unreachable code, etc.), not style preferences - consistent with this project's "don't add tooling beyond what's needed" pattern. Airbnb/Standard were passed over because they'd flag a large volume of pre-existing, correct code purely for formatting/style reasons unrelated to correctness.
+
+### Q32: What enforces lint/tests locally, before code even reaches a PR?
+**A:** Husky git hooks: `pre-commit` runs `npm run lint` (fast, no DB needed), `pre-push` runs `npm test` (needs a local Postgres instance, per Q30 - pushing is a less frequent action than committing, so that cost is paid less often).
+This is a local convenience/fast-feedback layer, not the actual enforcement mechanism - a developer can always bypass hooks (`--no-verify`) or push from a machine without hooks installed, so the GitHub Actions check (Q29) + branch protection remain the real gate.
+
+---
+
 ## Template for new entries
 
 ```markdown

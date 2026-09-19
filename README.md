@@ -13,6 +13,8 @@ Express + Sequelize REST API using a controller → service → repository archi
 - **swagger-jsdoc** + **swagger-ui-express** — API docs at `/api-docs`
 - **nodemon** — dev auto-reload
 - **Jest** + **Supertest** — integration tests against a real Postgres test database (see [Testing](#testing))
+- **ESLint** — `eslint:recommended`, flat config (`eslint.config.js`)
+- **Husky** — local git hooks (pre-commit lint, pre-push tests)
 
 ## Setup
 
@@ -78,6 +80,19 @@ npm test
 Integration tests (Jest + Supertest) run against a real, dedicated `<DB_NAME>_test` Postgres database - not mocks - since the properties under test (transaction behavior, row locking, reuse detection, concurrency) only mean something against a real database. `jest.config.js`'s `globalSetup`/`globalTeardown` create that database and run the actual migrations/seeders once per run; each test file truncates the mutable tables between tests. Tests run serially (`--runInBand`) since they share one database.
 
 Coverage: signup/signin (incl. validation, duplicate email, inactive account, wrong password), `/me` and `authenticate.middleware.js` (missing/malformed/expired/forged tokens, Bearer header, immediate revocation on logout), refresh-token rotation, reuse detection (including that it revokes the *whole* session, not just the replayed token), expiration, logout, and the 3-session cap under both sequential and concurrent logins. See [DECISIONS.md](DECISIONS.md) Q27–Q28.
+
+## CI & merge gate
+
+```bash
+npm run lint       # ESLint
+npm run lint:fix   # ESLint, auto-fixing what it can
+```
+
+Every PR into `main` runs `.github/workflows/ci.yml`: install → lint → test, against a real `postgres:16` service container (same reasoning as local testing above). Locally, Husky hooks catch problems even earlier: `pre-commit` runs lint, `pre-push` runs the test suite. Hooks are a convenience, not the enforcement - the actual gate is the required GitHub Actions check on `main`.
+
+**One-time setup** (repo admin, in GitHub, not in code): Settings → Branches → Add branch protection rule for `main` → enable "Require a pull request before merging" and "Require status checks to pass before merging" → select the `lint-and-test` check.
+
+See [DECISIONS.md](DECISIONS.md) Q29–Q32 for the reasoning, including why there's no separate "build" step.
 
 ## Database schema
 

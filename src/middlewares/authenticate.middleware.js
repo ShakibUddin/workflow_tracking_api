@@ -18,7 +18,7 @@ const authenticate = async (req, res, next) => {
   let payload;
   try {
     payload = verifyAccessToken(token);
-  } catch (err) {
+  } catch {
     return next(ApiError.unauthorized('Invalid or expired token'));
   }
 
