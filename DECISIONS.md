@@ -49,6 +49,26 @@ This repo is meant to be a clean starting point, not a template with throwaway s
 
 ---
 
+## CI / merge gate
+
+### Q12: What runs before a PR can merge into `main`, and where is it defined?
+**A:** A GitHub Actions workflow (`.github/workflows/ci.yml`) triggered on every PR targeting `main` (and on direct pushes to `main`): install deps, `npm run lint` (ESLint), then `npm test` (Jest + Supertest). No separate "build" step - there's nothing to compile in a plain Node/Express app, so a clean `npm ci` + passing lint + passing tests *is* the build check.
+Branch protection (requiring this workflow's check to pass, and requiring a PR before merging) is a GitHub *repository setting*, not something expressed in code - it has to be turned on once in GitHub's UI (Settings → Branches → branch protection rule for `main` → require the `lint-and-test` status check).
+
+### Q13: Why does the test suite not need a Postgres service container in CI (yet)?
+**A:** At this point in the codebase, nothing reachable from `src/app.js` touches the database - `routes/index.js` only mounts the health check, which doesn't query anything, and `src/models/index.js` only opens a Sequelize connection lazily on first query. `tests/app.test.js` covers exactly what exists (health check, 404 handling, Swagger UI) without needing a real DB.
+This will change the moment a feature branch that queries the database (e.g. auth, or any real resource) merges in - at that point its own test suite will need a Postgres service in this workflow, the same way a from-scratch build of this exact CI setup for an auth-bearing branch already used one (`postgres:16` service container + `jest.config.js` `globalSetup`/`globalTeardown` creating a dedicated `_test` database). Adding that machinery now, before anything needs it, was deliberately skipped - it's easy to add when the first DB-dependent test actually lands, and speculative infrastructure for tests that don't exist yet is exactly the kind of premature complexity this project avoids (Q1, Q11).
+
+### Q14: Why ESLint now, and why the minimal `eslint:recommended` config instead of Airbnb/Standard?
+**A:** `eslint:recommended` (flat config, `eslint.config.js`) + Node globals, with one project-specific rule tweak: `no-unused-vars` ignores an unused `next` parameter, because Express identifies error-handling middleware purely by its 4-argument arity (`(err, req, res, next)`) - `next` must stay declared even when never called, or `errorHandler.middleware.js` silently stops being recognized as one.
+`eslint:recommended` only flags likely bugs (unused vars, unreachable code, etc.), not style preferences - consistent with this project's "don't add tooling beyond what's needed" pattern. Airbnb/Standard were passed over because they'd flag a large volume of pre-existing, correct code purely for formatting/style reasons unrelated to correctness.
+
+### Q15: What enforces lint/tests locally, before code even reaches a PR?
+**A:** Husky git hooks: `pre-commit` runs `npm run lint` (fast, no DB needed), `pre-push` runs `npm test`.
+This is a local convenience/fast-feedback layer, not the actual enforcement mechanism - a developer can always bypass hooks (`--no-verify`) or push from a machine without hooks installed, so the GitHub Actions check (Q12) + branch protection remain the real gate. Splitting lint (pre-commit) from tests (pre-push) instead of running both at both stages keeps the common case (committing) fast; it matters less here than it will once tests need a database (Q13), but the split is set up now so it doesn't need revisiting later.
+
+---
+
 ## Template for new entries
 
 ```markdown
