@@ -26,10 +26,12 @@ const logger = createLogger({
   exitOnError: false,
 });
 
-// Console output is opt-in outside production and uses its own human-readable
-// format (colorized, single line) instead of the JSON used by the file transports,
-// since a developer's terminal and a log aggregator have different needs.
-if (env !== 'production') {
+// Console output is opt-in outside production and test (Jest's own output is
+// noisy enough without every request/service-layer log line interleaved) and
+// uses its own human-readable format (colorized, single line) instead of the
+// JSON used by the file transports, since a developer's terminal and a log
+// aggregator have different needs.
+if (env !== 'production' && env !== 'test') {
   logger.add(
     new transports.Console({
       format: format.combine(

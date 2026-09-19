@@ -47,6 +47,86 @@ Avoids scattering `res.status(...).json(...)` error-shaping logic across every c
 **A:** No. An initial `Workflow` resource (model, migration, repository, service, controller, route, DTOs) was scaffolded to prove the architecture end-to-end, then removed once confirmed working.
 This repo is meant to be a clean starting point, not a template with throwaway sample code that every real feature has to delete first. Only `src/routes/health.routes.js` remains as a working example of the route layer.
 
+### Q12: How is the JWT delivered to the frontend?
+**A:** As an httpOnly cookie, never in the JSON response body.
+The frontend was specified to use httpOnly cookies. This means client-side JS can never read or exfiltrate the token (mitigates XSS token theft), at the cost of needing CORS configured with `credentials: true` and an explicit origin (not `*`) for cross-origin requests - see `CORS_ORIGIN` in `.env.example` and `app.js`.
+
+### Q13: Access token and refresh token, or just one long-lived token?
+**A:** Both - a short-lived access token (15m default) for authenticating requests, and a longer-lived refresh token (7d default, sliding) used only to mint new access tokens via `POST /auth/refresh-token`.
+Limits the blast radius of a leaked access token to its short lifetime, while avoiding forcing the user to re-enter credentials every 15 minutes. Configurable via `JWT_ACCESS_EXPIRES_IN` / `REFRESH_TOKEN_TTL_DAYS`.
+
+### Q14: How is the refresh token stored and validated server-side? *(superseded by Q19-Q21 - kept for history)*
+**A:** ~~The `users.refresh_token` column stores the single currently-valid refresh token per user.~~ Replaced by the sessions/token-families/refresh-tokens model below once multi-session support and reuse detection were required - see Q19.
+
+### Q15: Does `/auth/logout` require a valid access token?
+**A:** No - it reads the refresh token cookie directly (not `req.user` from `authenticate.middleware.js`), resolves it to a session (`token.service.js#revokeByRawToken`), revokes that session's whole token family, and clears both cookies unconditionally either way (even if the cookie was missing or already stale).
+Logout has to work even when the access token has already expired (its whole purpose is often to clean up after an expired/abandoned session), so gating it behind a valid access token would make it fail exactly when it's needed.
+
+### Q16: bcrypt or bcryptjs for password hashing?
+**A:** `bcryptjs` (pure JS implementation).
+Avoids requiring a native build toolchain (node-gyp, a C++ compiler) to install `bcrypt`, which isn't guaranteed to be present on every dev/deploy machine (e.g. a bare Windows box). Slightly slower than the native version, which is an acceptable tradeoff at this scale.
+
+### Q17: Why a generic `lookup` table for user status instead of a Postgres ENUM or a dedicated `user_statuses` table?
+**A:** Matches the schema given: one reusable `lookup` table (`type` + `label` + `value`) that can hold `USER_STATUS` today and other enum-like reference data later without a new migration/table per concept.
+The tradeoff is that `users.status` is just a plain FK integer with no database-level constraint tying it to `type = 'USER_STATUS'` specifically - that check only happens in application code (`auth.constants.js` + `lookupRepository.findByTypeAndValue`).
+
+### Q18: How does a new signup get the `EMPLOYEE` role?
+**A:** `auth.service.js#signup` looks up the `EMPLOYEE` role and the `ACTIVE` lookup row, then creates the user and the `user_roles` link inside one Sequelize transaction.
+Every user must have exactly the default role assigned atomically with account creation - the transaction guarantees signup can't leave a user row with zero roles if the second insert fails. There's no self-service way to sign up as `ADMIN`; that must be granted separately (not yet built).
+
+---
+
+## Production-grade auth: sessions, token families, reuse detection
+
+The single `users.refresh_token` column (Q14) couldn't support multiple concurrent sessions per user or detect a stolen-and-reused refresh token, so it was replaced with a three-table model: `sessions`, `token_families`, `refresh_tokens`.
+
+### Q19: Why three separate tables (`sessions`, `token_families`, `refresh_tokens`) instead of one?
+**A:** Each represents a genuinely different lifetime/concept:
+- **`sessions`** = one logged-in device/browser. What the 3-per-user cap counts, what `authenticate.middleware.js` checks on every request, what "log out this device" means.
+- **`token_families`** = the rotation lineage for one session's refresh tokens. Exists separately from `sessions` because its status has a third value sessions don't need - `COMPROMISED` (reuse detected) vs plain `REVOKED` (logout, eviction, expiry) - and because the family, not the session, is what a stolen token actually compromises.
+- **`refresh_tokens`** = one row per issued token, forming the rotation history via `replaced_by_id` (a forward-linked list). This is the actual audit trail: "token 3 → 4 → 5, then 3 was replayed and the family died."
+
+A flatter design (e.g. rotation state as columns directly on `sessions`) was considered and rejected: it would conflate "is this device logged in" with "is this specific token chain still trustworthy," which are different questions the moment reuse is detected (both die, but for different, separately-auditable reasons). The task explicitly asked not to simplify this away.
+
+### Q20: Why opaque random refresh tokens (not JWTs), hashed at rest?
+**A:** `crypto.randomBytes(64)` (512 bits) hex-encoded, hashed with SHA-256 before storage (`src/utils/refreshToken.js`) - the raw value is never persisted anywhere, only handed to the client once.
+A JWT refresh token would carry claims and be self-verifying, which is exactly wrong for a token that must be revocable and single-use: with an opaque token, validity is *only* "does a matching, ACTIVE, unexpired hash exist in the DB," so revoking it is a single UPDATE, not something you have to wait out until it expires. Hashing means a database leak alone (backup, SQLi, insider) can never be turned back into a usable token, the same reasoning as password hashing. The access token stays a JWT (Q13) since it's short-lived and stateless-by-design.
+
+### Q21: How does reuse detection work, and why revoke the *whole* family instead of just the replayed token?
+**A:** Every refresh token is single-use (`status`: `ACTIVE` → `ROTATED`). If a token with status `ROTATED` or `REVOKED` is presented again, that can only mean someone other than the last legitimate rotator is holding it - `token.service.js#rotate` treats this as theft and immediately revokes the entire family: every `ACTIVE` token in it, the family itself (marked `COMPROMISED`, not just `REVOKED` - see the `revoked_reason` audit trail), and the owning session.
+Revoking only the replayed token would leave the *current* legitimate-looking token (which the attacker may also hold, if they captured it mid-chain) still valid - killing the whole lineage is the only way to guarantee an attacker's foothold is actually closed. The cost: the legitimate user is also logged out and must re-authenticate. That's the correct tradeoff for a detected compromise, not a bug.
+
+### Q22: How many sessions per user, and what happens on the (N+1)th login?
+**A:** 3 by default (`MAX_ACTIVE_SESSIONS_PER_USER`). On login, if creating a new session would exceed the cap, the oldest-by-`last_used_at` session(s) are evicted (revoked, cascading to their family/tokens) *before* the new session is created - see `token.service.js#enforceSessionLimit`.
+Eviction (not rejecting the new login) was chosen because rejecting a legitimate login for being "too logged in" is bad UX with no security benefit - the user is authenticating correctly, and the cap exists to bound total live credential material per account, not to gate access. `last_used_at` is a sliding value updated on every refresh, so "oldest" means "least recently active," not "oldest login," which evicts the session that's actually most likely abandoned.
+
+### Q23: Where does concurrency protection actually happen, and what did the first implementation get wrong?
+**A:** Every mutation to a session/family/refresh-token runs inside a Postgres transaction with the relevant rows locked via `SELECT ... FOR UPDATE` (`transaction.LOCK.UPDATE` in Sequelize) - the refresh token row, its token family, and (during rotation) the session row, plus the user's active-sessions set during login. This serializes concurrent operations against the same token/family/session so two simultaneous refreshes, or a login racing an eviction, can't both act on stale reads.
+Two real bugs surfaced and were fixed while building this: (1) **`FOR UPDATE` + outer join**: locking a query that used Sequelize's `include` failed outright because Postgres refuses `FOR UPDATE` on the nullable side of an outer join - fixed by fetching the token and its family as two separate locked queries instead of one joined one (`refreshToken.repository.js`, `tokenFamily.repository.js`). (2) **Throwing inside a managed transaction rolls back everything in it**: the original reuse-detection code revoked the family *then threw* an `ApiError` from inside `sequelize.transaction(async (t) => {...})` to reject the request - Sequelize rolls back the whole transaction on any thrown error, silently undoing the revocation it had just performed. `token.service.js#rotate` now returns a `{ error }` / `{ tokens }` result from the callback and only throws *after* the transaction has committed, so a detected-reuse revocation always persists. Verified live: replaying a stale token now correctly kills the session for every subsequent request, including ones already holding the "current" token.
+
+### Q24: What happens when the same still-valid refresh token is used by two truly concurrent requests (e.g. two tabs both refreshing at once)?
+**A:** Exactly one wins the row lock and rotates successfully; every other concurrent request sees the token as already `ROTATED` by the time it acquires the lock and is treated as reuse - which revokes the whole session, logging out every tab, not just failing the losing request gracefully. Confirmed live by firing 5 simultaneous refreshes at one valid token: 1 succeeded, the rest got `reuse detected` / `session revoked`.
+This is the well-known tradeoff of *strict* single-use rotation with no grace period: it has zero tolerance for legitimate races (double-fired requests, retried timeouts, multiple tabs refreshing near-simultaneously), because there's no way to distinguish that from an attacker replaying a captured token. The task asked for rotation to be enforced and reuse to revoke the session, so this implementation is strict by design. If this proves too aggressive in practice, the standard mitigation is a short grace window (e.g. a few seconds) during which the immediately-preceding token is still accepted and returns the *same* rotated pair rather than issuing a new one - deliberately not built here, since it's an explicit relaxation of "enforce rotation" that should be a separate, discussed decision rather than something quietly baked in.
+
+### Q25: Why does `authenticate.middleware.js` do a database lookup on every request instead of trusting the JWT alone?
+**A:** It verifies the access token's signature/expiry, then also checks that the session named in its `sid` claim is still `ACTIVE` and unexpired (`sessionRepository.findActiveById`).
+A purely stateless JWT check would mean a revoked session (logout, reuse detection, eviction) keeps working for anyone holding its access token until that token's own short expiry catches up - up to 15 minutes of continued access after "revocation." Given the whole point of this task was correct revocation semantics, that gap was judged unacceptable; the DB round-trip per authenticated request is the deliberate cost of closing it. If this becomes a measured bottleneck, the standard fix is caching active-session lookups briefly (e.g. a few seconds) rather than removing the check.
+
+### Q26: Why is `token_families.user_id` denormalized when it's derivable via `session_id → sessions.user_id`?
+**A:** So "find/revoke everything for this user" queries don't require a join through `sessions`. It's kept in sync trivially because it's only ever written once, at family creation, alongside the session it belongs to - never updated afterward.
+
+---
+
+## Test suite
+
+### Q27: What testing stack, and why integration tests against a real Postgres DB instead of mocking Sequelize?
+**A:** Jest + Supertest, hitting `src/app.js` in-process (no server listening, no HTTP over the network) against a dedicated `<DB_NAME>_test` database, with `jest.config.js`'s `globalSetup`/`globalTeardown` creating that database and running the real migrations/seeders once per test run (`tests/globalSetup.js`), and each test file truncating the mutable tables between tests (`tests/helpers/db.js`).
+Mocking Sequelize/the repositories was rejected: the entire point of this auth system is transaction behavior, row-level locking, and Postgres-specific semantics (`FOR UPDATE` + outer joins, advisory locks, phantom reads under `READ COMMITTED`) - a mock can only assert "the mock was called correctly," not "this is actually safe under concurrency." Two real bugs (Q28, and the transaction-rollback bug already in Q23) were only found because these are real integration tests against a real database. Tests run with `--runInBand` (serial) since they share one database - parallel Jest workers truncating/asserting against the same tables would interfere with each other.
+
+### Q28: What did writing the concurrent-session-limit test find?
+**A:** A genuine concurrency bug: firing 3 simultaneous logins at a user already at the session cap resulted in 4 active sessions, not 3. `SELECT ... FOR UPDATE` (used for reuse-detection locking in Q23) only locks rows that already exist - it does nothing to stop a concurrent transaction from *inserting* a new row matching the same query. Under `READ COMMITTED` (Postgres's default), three simultaneous logins each ran "count my active sessions" before any of them had committed their own new session row, so all three legitimately saw the same pre-eviction count, all three skipped eviction, and all three inserted - a classic phantom-read / write-skew race on a count-based invariant, which row locks alone cannot prevent.
+Fixed with a Postgres advisory lock (`pg_advisory_xact_lock`, keyed by `user_id`, transaction-scoped) acquired at the top of `token.service.js#issueSessionTokens`, before the session count is read. This serializes every login for the *same* user through the count-then-evict-then-insert section - concurrent logins for *different* users are completely unaffected, since the lock key is per-user. Verified with a test firing `maxSessions` simultaneous logins and asserting the active count never exceeds the cap; also re-ran the full suite twice more to confirm the fix isn't merely timing-lucky.
+
 ---
 
 ## Template for new entries

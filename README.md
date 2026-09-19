@@ -7,6 +7,8 @@ Express + Sequelize REST API using a controller → service → repository archi
 - **Express** — HTTP layer
 - **Sequelize** (PostgreSQL) — ORM
 - **Joi** — DTO validation/shaping (`src/dtos`)
+- **jsonwebtoken** + **bcryptjs** — auth: JWT access tokens, password hashing
+- **cookie-parser** — reads the httpOnly auth cookies
 - **Winston** — logging (console in dev, `logs/combined.log` + `logs/error.log` always)
 - **swagger-jsdoc** + **swagger-ui-express** — API docs at `/api-docs`
 - **nodemon** — dev auto-reload
@@ -15,8 +17,9 @@ Express + Sequelize REST API using a controller → service → repository archi
 
 ```bash
 npm install
-cp .env.example .env   # then edit DB credentials
+cp .env.example .env   # then edit DB credentials and JWT secret
 npm run migrate        # create tables
+npm run seed           # seed roles (ADMIN, EMPLOYEE) and lookup values (USER_STATUS)
 npm run dev            # start with nodemon
 ```
 
@@ -28,6 +31,7 @@ Health check: http://localhost:3000/api/v1/health
 ```
 src/
   config/       env, sequelize, winston, swagger config
+  constants/    shared enum-like string constants (role names, lookup types/values, token/session status)
   models/       Sequelize models
   database/     migrations & seeders
   dtos/         Joi request schemas + response shaping classes
@@ -35,9 +39,55 @@ src/
   services/     business logic (talks to repositories)
   controllers/  HTTP req/res handling (talks to services)
   routes/       Express routers + swagger-jsdoc annotations
-  middlewares/  validation, error handling, request logging
+  middlewares/  authentication, validation, error handling, request logging
 ```
 
 Request flow: `route -> validate(DTO) -> controller -> service -> repository -> model`.
 
-This is bootstrap-only — no API resources are implemented yet. The layer folders exist (with `.gitkeep` placeholders) so new features can be added by dropping a model/migration/repository/service/controller/route into each, following the flow above.
+## Authentication
+
+JWT access token + opaque random refresh token, both delivered as httpOnly cookies (never in the JSON body):
+
+| Endpoint | Method | Auth required | Notes |
+|---|---|---|---|
+| `/api/v1/auth/signup` | POST | No | Creates a user with the `EMPLOYEE` role and `ACTIVE` status by default, opens a session |
+| `/api/v1/auth/signin` | POST | No | Rejects inactive accounts (403), opens a session |
+| `/api/v1/auth/refresh-token` | POST | Refresh cookie | Rotates the refresh token (single-use); reuse of an already-rotated token revokes the whole session |
+| `/api/v1/auth/logout` | POST | Refresh cookie (optional) | Revokes the current session and clears both cookies |
+| `/api/v1/auth/me` | GET | Access cookie | Example of a route protected by `authenticate.middleware.js` |
+
+The access token cookie is scoped to `/`, the refresh token cookie to `/api/v1/auth`. See `src/utils/cookies.js`.
+
+### Session model
+
+Sign-in/sign-up creates a **session** (one per device/browser), capped at `MAX_ACTIVE_SESSIONS_PER_USER` (default 3) — the least-recently-used session is evicted when a new login would exceed the cap. Each session owns one **token family**, which tracks the rotation history of its refresh tokens:
+
+- Refresh tokens are single-use: each `/auth/refresh-token` call invalidates the presented token and issues a new one in the same family.
+- Presenting a token that's already been rotated away (or revoked) is treated as theft (**reuse detection**) and immediately revokes the entire family + session, forcing re-authentication.
+- `authenticate.middleware.js` checks the session's status on every request (not just at refresh time), so a revoked session stops working immediately rather than waiting for the access token to expire on its own.
+
+See [DECISIONS.md](DECISIONS.md) (Q19–Q28) for the full design rationale, including three concurrency bugs found and fixed while building/testing this (`FOR UPDATE` + outer joins, a transaction-rollback footgun in the reuse-detection path, and a phantom-read race in session-limit enforcement), plus the known tradeoff of strict rotation with concurrent requests.
+
+## Testing
+
+```bash
+npm test
+```
+
+Integration tests (Jest + Supertest) run against a real, dedicated `<DB_NAME>_test` Postgres database - not mocks - since the properties under test (transaction behavior, row locking, reuse detection, concurrency) only mean something against a real database. `jest.config.js`'s `globalSetup`/`globalTeardown` create that database and run the actual migrations/seeders once per run; each test file truncates the mutable tables between tests. Tests run serially (`--runInBand`) since they share one database.
+
+Coverage: signup/signin (incl. validation, duplicate email, inactive account, wrong password), `/me` and `authenticate.middleware.js` (missing/malformed/expired/forged tokens, Bearer header, immediate revocation on logout), refresh-token rotation, reuse detection (including that it revokes the *whole* session, not just the replayed token), expiration, logout, and the 3-session cap under both sequential and concurrent logins. See [DECISIONS.md](DECISIONS.md) Q27–Q28.
+
+## Database schema
+
+- **`lookup`** — generic type/value table for enum-like data (currently `USER_STATUS`: `ACTIVE`/`INACTIVE`)
+- **`roles`** — `ADMIN`, `EMPLOYEE`
+- **`users`** — profile + credentials; `status` is a FK to `lookup.id`
+- **`user_roles`** — many-to-many join between `users` and `roles`
+- **`sessions`** — one row per logged-in device; capped per user, checked on every authenticated request
+- **`token_families`** — one row per session's refresh-token rotation lineage; `ACTIVE` / `REVOKED` / `COMPROMISED`
+- **`refresh_tokens`** — one row per issued (hashed) refresh token; `replaced_by_id` forms the rotation history chain
+
+Run `npm run seed` after `npm run migrate` on a fresh database - signup fails with a 500 until the `ACTIVE` lookup row and `EMPLOYEE` role exist.
+
+See [DECISIONS.md](DECISIONS.md) for the reasoning behind these choices.

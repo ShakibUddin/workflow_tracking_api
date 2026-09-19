@@ -16,6 +16,15 @@ const options = {
         description: 'Local server',
       },
     ],
+    components: {
+      securitySchemes: {
+        cookieAuth: {
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'accessToken',
+        },
+      },
+    },
   },
   // swagger-jsdoc resolves these with `glob`, which only understands forward
   // slashes. path.join() emits backslashes on Windows, which silently matches
