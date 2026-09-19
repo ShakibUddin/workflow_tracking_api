@@ -1,18 +1,23 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 const routes = require('./routes');
+const { corsOrigin } = require('./config/env');
 const requestLogger = require('./middlewares/requestLogger.middleware');
 const { notFoundHandler, errorHandler } = require('./middlewares/errorHandler.middleware');
 
 const app = express();
 
 app.use(helmet());
-app.use(cors());
+// credentials: true + an explicit origin (not '*') are both required for the
+// browser to accept/send the httpOnly auth cookies on cross-origin requests.
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(requestLogger);
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));

@@ -10,6 +10,35 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: workflow_tracking_api
+        ports:
+          - 5432:5432
+        # Waits for Postgres to actually accept connections before any job
+        # step runs - without this, tests can start before the DB is ready.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: workflow_tracking_api
+      DB_DIALECT: postgres
+      JWT_ACCESS_SECRET: ci-access-secret
+      REFRESH_TOKEN_TTL_DAYS: 7
+      MAX_ACTIVE_SESSIONS_PER_USER: 3
+
     steps:
       - uses: actions/checkout@v5
 

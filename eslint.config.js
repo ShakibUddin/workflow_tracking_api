@@ -17,8 +17,9 @@ module.exports = [
     },
     rules: {
       // Express identifies an error-handling middleware purely by its
-      // 4-argument arity - `next` must stay declared even when unused, or
-      // errorHandler.middleware.js silently stops being recognized as one.
+      // 4-argument arity - `next` must stay declared even when unused, or a
+      // middleware like errorHandler.middleware.js or authenticate.middleware.js
+      // silently stops being recognized as one.
       'no-unused-vars': ['error', { args: 'after-used', argsIgnorePattern: '^next$' }],
     },
   },
