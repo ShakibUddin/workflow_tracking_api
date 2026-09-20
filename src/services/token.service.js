@@ -3,6 +3,7 @@ const sessionRepository = require('../repositories/session.repository');
 const tokenFamilyRepository = require('../repositories/tokenFamily.repository');
 const refreshTokenRepository = require('../repositories/refreshToken.repository');
 const userRepository = require('../repositories/user.repository');
+const permissionService = require('./permission.service');
 const { signAccessToken } = require('../utils/jwt');
 const { generateRefreshToken, hashToken } = require('../utils/refreshToken');
 const ApiError = require('../utils/ApiError');
@@ -21,11 +22,11 @@ const sessionExpiryFromNow = () => new Date(Date.now() + refreshTokenConfig.ttlD
 class TokenService {
   // Called from within signup/signin's own transaction so "evict oldest
   // session" and "create new session" are atomic with the credential check
-  // that preceded them. Takes roles explicitly (rather than reading
-  // user.roles) so callers don't need an association eager-loaded just to
-  // mint a token - signup, for instance, knows the role it just assigned
-  // without a reload.
-  async issueSessionTokens(userId, roles, context, transaction) {
+  // that preceded them. Takes roles/permissions explicitly (rather than
+  // reading user.roles) so callers don't need an association eager-loaded
+  // just to mint a token - signup, for instance, knows the role it just
+  // assigned without a reload.
+  async issueSessionTokens(userId, roles, permissions, context, transaction) {
     // A Postgres advisory lock, scoped to this transaction, serializes every
     // concurrent login for THIS user through the count-then-insert section
     // below. Without it, two simultaneous logins can each run
@@ -63,7 +64,12 @@ class TokenService {
       { transaction }
     );
 
-    const accessToken = signAccessToken({ sub: String(userId), roles, sid: String(session.id) });
+    const accessToken = signAccessToken({
+      sub: String(userId),
+      roles,
+      permissions,
+      sid: String(session.id),
+    });
 
     return { accessToken, refreshToken: rawToken, refreshTokenExpiresAt: expiresAt };
   }
@@ -147,7 +153,13 @@ class TokenService {
         return { error: ApiError.unauthorized('User no longer exists') };
       }
       const roles = (user.roles || []).map((role) => role.name);
-      const accessToken = signAccessToken({ sub: String(user.id), roles, sid: String(session.id) });
+      const permissions = await permissionService.resolveForRoles(roles, { transaction });
+      const accessToken = signAccessToken({
+        sub: String(user.id),
+        roles,
+        permissions,
+        sid: String(session.id),
+      });
 
       return { tokens: { accessToken, refreshToken: newRawToken, refreshTokenExpiresAt: expiresAt } };
     });

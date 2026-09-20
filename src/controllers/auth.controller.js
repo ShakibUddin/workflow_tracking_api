@@ -12,9 +12,9 @@ const requestContext = (req) => ({
 class AuthController {
   async signup(req, res, next) {
     try {
-      const { user, tokens } = await authService.signup(req.body, requestContext(req));
+      const { user, tokens, permissions } = await authService.signup(req.body, requestContext(req));
       setAuthCookies(res, tokens);
-      res.status(201).json({ success: true, data: UserResponseDto.from(user) });
+      res.status(201).json({ success: true, data: UserResponseDto.from(user, permissions) });
     } catch (err) {
       next(err);
     }
@@ -22,9 +22,9 @@ class AuthController {
 
   async signin(req, res, next) {
     try {
-      const { user, tokens } = await authService.signin(req.body, requestContext(req));
+      const { user, tokens, permissions } = await authService.signin(req.body, requestContext(req));
       setAuthCookies(res, tokens);
-      res.json({ success: true, data: UserResponseDto.from(user) });
+      res.json({ success: true, data: UserResponseDto.from(user, permissions) });
     } catch (err) {
       next(err);
     }
@@ -54,8 +54,8 @@ class AuthController {
 
   async me(req, res, next) {
     try {
-      const user = await authService.getProfile(req.user.id);
-      res.json({ success: true, data: UserResponseDto.from(user) });
+      const { user, permissions } = await authService.getProfile(req.user.id);
+      res.json({ success: true, data: UserResponseDto.from(user, permissions) });
     } catch (err) {
       next(err);
     }

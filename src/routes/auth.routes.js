@@ -38,6 +38,11 @@ const router = Router();
  *           type: array
  *           items: { type: string }
  *           example: [EMPLOYEE]
+ *         permissions:
+ *           type: array
+ *           items: { type: string }
+ *           example: []
+ *           description: Action-string permissions derived from the user's roles - for the frontend to show/hide actions, never a substitute for backend enforcement.
  */
 
 /**

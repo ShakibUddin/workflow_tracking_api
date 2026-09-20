@@ -32,7 +32,12 @@ const authenticate = async (req, res, next) => {
       return next(ApiError.unauthorized('Session has been revoked'));
     }
 
-    req.user = { id: payload.sub, roles: payload.roles || [], sessionId: payload.sid };
+    req.user = {
+      id: payload.sub,
+      roles: payload.roles || [],
+      permissions: payload.permissions || [],
+      sessionId: payload.sid,
+    };
     return next();
   } catch (err) {
     return next(err);

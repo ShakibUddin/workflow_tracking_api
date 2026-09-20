@@ -19,7 +19,10 @@ const signinSchema = Joi.object({
  * copied here, so they can never leak regardless of what a query loaded.
  */
 class UserResponseDto {
-  constructor(user) {
+  // `permissions` is the flat action-string list (see DECISIONS.md Q33) for
+  // the frontend to show/hide actions with - it grants nothing by itself,
+  // the backend still enforces every check via authorize.middleware.js.
+  constructor(user, permissions = []) {
     this.id = user.id;
     this.firstName = user.firstName;
     this.lastName = user.lastName;
@@ -27,12 +30,13 @@ class UserResponseDto {
     this.mobileNumber = user.mobileNumber;
     this.status = user.statusInfo ? user.statusInfo.value : null;
     this.roles = (user.roles || []).map((role) => role.name);
+    this.permissions = permissions;
     this.createdAt = user.createdAt;
     this.updatedAt = user.updatedAt;
   }
 
-  static from(user) {
-    return new UserResponseDto(user);
+  static from(user, permissions) {
+    return new UserResponseDto(user, permissions);
   }
 }
 
