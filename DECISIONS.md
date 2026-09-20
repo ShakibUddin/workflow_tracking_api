@@ -151,6 +151,23 @@ This is a local convenience/fast-feedback layer, not the actual enforcement mech
 
 ---
 
+## RBAC
+
+### Q33: How is RBAC modeled, and why weren't `permissions`/`role_permissions` already there?
+**A:** Two new tables, `permissions` (`id`, `name` unique) and `role_permissions` (join table on `role_id`/`permission_id`, unique pair), added as ordinary migrations/models/seeders following the exact conventions `roles`/`user_roles` already used (BIGINT PKs, `underscored: true`, snake_case, timestamps). `Role.belongsToMany(Permission)` mirrors `Role.belongsToMany(User)`.
+Only `roles` existed beforehand - `permissions` and `role_permissions` were assumed to already exist going into this work but didn't (verified against both the migrations directory and the live DB), so this had to build them rather than "wire up to what's there."
+`permissions.name` is an action string (e.g. `user:manage`), never a URL/route - so it stays meaningful if a route is renamed or the same action becomes reachable from more than one endpoint. Enforcement checks membership in this string list, nothing more (no wildcards, no hierarchy, no resource-attribute policies) - see Q11's precedent against over-building ahead of real requirements.
+
+### Q34: How does a request know what a user is allowed to do - re-query the DB, or trust the token?
+**A:** Trust the token, same as roles already do (Q12-Q13). At sign-in/signup/refresh, `token.service.js` resolves `roles -> role_permissions -> permissions` (`role.repository.js#findPermissionNamesByRoleNames`, via `permission.service.js`) once and embeds the resulting action-string array as `permissions` in the access-token payload, right next to `roles`. `authenticate.middleware.js` copies it onto `req.user.permissions` with zero extra DB work, and the new `authorize.middleware.js` just checks array membership.
+The alternative (query `role_permissions` on every request) was rejected for the same reason roles never do that: it would be an inconsistent, extra DB round-trip layered on top of the per-request session-validation query that already exists (Q25), for a system where roles/permissions change rarely. The real cost is the same staleness window roles already accept: a role/permission change takes up to `JWT_ACCESS_EXPIRES_IN` (15m default) to reach an already-issued token. `GET /auth/me` is the one exception - like its `roles` field, it resolves `permissions` fresh from the DB on every call (`auth.service.js#getProfile`), so a client that wants to know "what can I do right now" (as opposed to "what could I do as of my last token issuance") has a way to ask.
+
+### Q35: Where is `authorize` actually applied, and what permissions were seeded?
+**A:** Nowhere yet, by design. This branch only has auth endpoints (`signup`/`signin`/`refresh-token`/`logout`/`me`) and no domain resource (no workflow/task/etc. controller exists - see Q11), so there is currently no real endpoint that should be gated behind a specific action permission. What was built is the infrastructure: the tables, JWT embedding, `GET /auth/me` returning `permissions` for the frontend to show/hide actions with, and a generic `authorize(...permissions)` middleware (`src/middlewares/authorize.middleware.js`, covered by unit tests in `tests/auth/permissions.test.js`) ready to drop onto a route the moment one needs it, e.g. `router.delete('/workflows/:id', authenticate, authorize('workflow:delete'), ...)`.
+A small starter permission set (`PERMISSIONS` in `auth.constants.js`: `user:manage`, `role:manage`, `session:manage`) was seeded and granted entirely to `ADMIN` (`EMPLOYEE` gets none) purely as a working example of the roles->role_permissions->permissions chain - not a real authorization policy. These names/grants are expected to be replaced/extended once real domain permissions are known; nothing in the codebase depends on their specific values.
+
+---
+
 ## Template for new entries
 
 ```markdown

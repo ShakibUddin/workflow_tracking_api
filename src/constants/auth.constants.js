@@ -3,6 +3,16 @@ const ROLES = Object.freeze({
   EMPLOYEE: 'EMPLOYEE',
 });
 
+// Action strings, not routes/URLs (see DECISIONS.md Q33) - a starter set
+// scoped to what already exists (user administration). Extend this as real
+// domain resources (e.g. workflows) get built; nothing here is enforced on
+// any route yet since none currently need it.
+const PERMISSIONS = Object.freeze({
+  USER_MANAGE: 'user:manage',
+  ROLE_MANAGE: 'role:manage',
+  SESSION_MANAGE: 'session:manage',
+});
+
 const LOOKUP_TYPES = Object.freeze({
   USER_STATUS: 'USER_STATUS',
 });
@@ -44,6 +54,7 @@ const REVOKE_REASON = Object.freeze({
 
 module.exports = {
   ROLES,
+  PERMISSIONS,
   LOOKUP_TYPES,
   USER_STATUS,
   SESSION_STATUS,

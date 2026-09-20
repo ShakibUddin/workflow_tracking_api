@@ -3,6 +3,7 @@ const userRepository = require('../repositories/user.repository');
 const roleRepository = require('../repositories/role.repository');
 const lookupRepository = require('../repositories/lookup.repository');
 const tokenService = require('./token.service');
+const permissionService = require('./permission.service');
 const { hashPassword, comparePassword } = require('../utils/password');
 const ApiError = require('../utils/ApiError');
 const logger = require('../config/logger');
@@ -29,6 +30,7 @@ class AuthService {
     }
 
     const passwordHash = await hashPassword(payload.password);
+    const permissions = await permissionService.resolveForRoles([employeeRole.name]);
 
     // User creation, role assignment, and the first session/token issuance
     // all happen atomically: a signup can never leave behind a user with no
@@ -50,6 +52,7 @@ class AuthService {
       const issuedTokens = await tokenService.issueSessionTokens(
         created.id,
         [employeeRole.name],
+        permissions,
         context,
         transaction
       );
@@ -60,7 +63,7 @@ class AuthService {
     logger.info('User registered', { id: userId });
 
     const user = await userRepository.findById(userId);
-    return { user, tokens };
+    return { user, tokens, permissions };
   }
 
   async signin({ email, password }, context) {
@@ -79,12 +82,13 @@ class AuthService {
     }
 
     const roles = (user.roles || []).map((role) => role.name);
+    const permissions = await permissionService.resolveForRoles(roles);
     const tokens = await sequelize.transaction((transaction) =>
-      tokenService.issueSessionTokens(user.id, roles, context, transaction)
+      tokenService.issueSessionTokens(user.id, roles, permissions, context, transaction)
     );
 
     logger.info('User signed in', { id: user.id });
-    return { user, tokens };
+    return { user, tokens, permissions };
   }
 
   async logout(refreshToken) {
@@ -100,7 +104,12 @@ class AuthService {
     if (!user) {
       throw ApiError.notFound('User not found');
     }
-    return user;
+    // Resolved fresh from the DB (like `roles` already is here), not read
+    // from the access token - see DECISIONS.md Q33 on the token's own
+    // permissions being allowed to lag by up to JWT_ACCESS_EXPIRES_IN.
+    const roles = (user.roles || []).map((role) => role.name);
+    const permissions = await permissionService.resolveForRoles(roles);
+    return { user, permissions };
   }
 }
 
