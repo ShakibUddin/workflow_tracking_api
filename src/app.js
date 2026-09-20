@@ -11,6 +11,8 @@ const { notFoundHandler, errorHandler } = require('./middlewares/errorHandler.mi
 
 const app = express();
 
+// Sets a battle-tested set of security-related HTTP response headers (CSP,
+// HSTS, X-Frame-Options, etc.) in one call - see DECISIONS.md Q40.
 app.use(helmet());
 // credentials: true + an explicit origin (not '*') are both required for the
 // browser to accept/send the httpOnly auth cookies on cross-origin requests.

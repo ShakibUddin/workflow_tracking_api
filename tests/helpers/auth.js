@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../src/app');
 const { parseCookies } = require('./cookies');
+const { sequelize } = require('../../src/models');
 
 const DEFAULT_PASSWORD = 'SuperSecret123';
 
@@ -44,4 +45,21 @@ const me = async (accessToken) => {
   return { res };
 };
 
-module.exports = { app, DEFAULT_PASSWORD, buildUser, signup, signin, refresh, logout, me };
+// Signs up a normal EMPLOYEE, then swaps EMPLOYEE for ADMIN directly via SQL
+// (there's no self-service way to become ADMIN - see DECISIONS.md Q18) so
+// the result is a clean ADMIN-only user, not a dual-role ADMIN+EMPLOYEE one -
+// tests that assert "an ADMIN can't be added to a team" depend on that.
+// Finally signs in again so the returned token actually carries the new
+// role/permissions (both are resolved and embedded at token-issue time, not
+// re-checked per request - see Q34).
+const signupAdmin = async (overrides = {}) => {
+  const { payload } = await signup(overrides);
+  await sequelize.query(`
+    UPDATE user_roles SET role_id = (SELECT id FROM roles WHERE name = 'ADMIN')
+    WHERE user_id = (SELECT id FROM users WHERE email = '${payload.email}')
+  `);
+  const { res, cookies } = await signin({ email: payload.email, password: payload.password });
+  return { res, cookies, payload };
+};
+
+module.exports = { app, DEFAULT_PASSWORD, buildUser, signup, signin, refresh, logout, me, signupAdmin };

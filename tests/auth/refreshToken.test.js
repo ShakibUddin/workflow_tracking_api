@@ -1,9 +1,14 @@
 const request = require('supertest');
 const { sequelize, resetMutableTables } = require('../helpers/db');
 const { app, signup, refresh, me } = require('../helpers/auth');
+const userRepository = require('../../src/repositories/user.repository');
 
 beforeEach(async () => {
   await resetMutableTables();
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -139,5 +144,34 @@ describe('POST /auth/refresh-token', () => {
 
     const { res } = await refresh(cookies.refreshToken);
     expect(res.status).toBe(401);
+  });
+
+  it('rejects rotation when the session was revoked independently of its (still-ACTIVE) token family', async () => {
+    // An edge case the normal revoke-cascade helpers always keep in sync
+    // (see token.service.js's #revokeFamilyCascade/#revokeSessionCascade) -
+    // simulated directly so the defensive check in #rotate that guards
+    // against a family/session mismatch actually gets exercised.
+    const { payload, cookies } = await signup();
+    await sequelize.query(`
+      UPDATE sessions SET status = 'REVOKED'
+      WHERE user_id = (SELECT id FROM users WHERE email = '${payload.email}')
+    `);
+
+    const { res } = await refresh(cookies.refreshToken);
+    expect(res.status).toBe(401);
+    expect(res.body.message).toMatch(/revoked/i);
+  });
+
+  it('rotate treats a user with no `roles` loaded as having none', async () => {
+    // userRepository.findById always eager-loads roles in real usage (see
+    // its defaultIncludes) - spied here for this one call only, to reach the
+    // `|| []` fallback #rotate defends with independently.
+    const { payload, cookies } = await signup();
+    const [[{ id }]] = await sequelize.query(`SELECT id FROM users WHERE email = '${payload.email}'`);
+    const real = await userRepository.findById(id);
+    jest.spyOn(userRepository, 'findById').mockResolvedValueOnce({ ...real.get({ plain: true }), roles: undefined });
+
+    const { res } = await refresh(cookies.refreshToken);
+    expect(res.status).toBe(200);
   });
 });

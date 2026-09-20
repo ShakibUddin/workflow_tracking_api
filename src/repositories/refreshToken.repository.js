@@ -23,10 +23,6 @@ class RefreshTokenRepository {
     return token.update({ status: 'ROTATED', rotatedAt: new Date(), replacedById }, options);
   }
 
-  async revoke(token, reason, options) {
-    return token.update({ status: 'REVOKED', revokedAt: new Date(), revokedReason: reason }, options);
-  }
-
   // Used when a family is killed (logout, reuse detection, eviction) so any
   // token that's still ACTIVE for it stops being usable, in one statement.
   async revokeActiveByFamilyId(familyId, reason, options) {

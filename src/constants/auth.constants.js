@@ -11,13 +11,24 @@ const PERMISSIONS = Object.freeze({
   USER_MANAGE: 'user:manage',
   ROLE_MANAGE: 'role:manage',
   SESSION_MANAGE: 'session:manage',
+  TEAM_CREATE: 'team:create',
+  TEAM_UPDATE: 'team:update',
+  TEAM_DELETE: 'team:delete',
+  TEAM_MANAGE_MEMBERS: 'team:manage_members',
+  TEAM_VIEW_ALL: 'team:view_all',
 });
 
 const LOOKUP_TYPES = Object.freeze({
   USER_STATUS: 'USER_STATUS',
+  TEAM_STATUS: 'TEAM_STATUS',
 });
 
 const USER_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  INACTIVE: 'INACTIVE',
+});
+
+const TEAM_STATUS = Object.freeze({
   ACTIVE: 'ACTIVE',
   INACTIVE: 'INACTIVE',
 });
@@ -57,6 +68,7 @@ module.exports = {
   PERMISSIONS,
   LOOKUP_TYPES,
   USER_STATUS,
+  TEAM_STATUS,
   SESSION_STATUS,
   TOKEN_FAMILY_STATUS,
   REFRESH_TOKEN_STATUS,

@@ -56,6 +56,32 @@ describe('active session cap', () => {
     expect(evicted.revoked_reason).toBe('session_limit_exceeded');
   });
 
+  it('eviction still succeeds when the oldest session\'s token family is already missing', async () => {
+    // Orphans the oldest session's family directly - not reachable through
+    // the app's own API (session+family are always created/revoked
+    // together), but exercises #revokeSessionCascade's guard for a session
+    // that has no family left to also revoke.
+    const { payload, cookies: first } = await signup();
+    await sequelize.query(`
+      DELETE FROM token_families WHERE session_id = (
+        SELECT s.id FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = '${payload.email}'
+      )
+    `);
+
+    for (let i = 0; i < maxSessions; i += 1) {
+      await signin({ email: payload.email, password: payload.password });
+    }
+
+    const oldest = await refresh(first.refreshToken);
+    expect(oldest.res.status).toBe(401);
+
+    const [[{ count }]] = await sequelize.query(`
+      SELECT count(*)::int FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE u.email = '${payload.email}' AND s.status = 'ACTIVE'
+    `);
+    expect(count).toBe(maxSessions);
+  });
+
   it('never exceeds the cap even under concurrent logins', async () => {
     const { payload } = await signup();
 

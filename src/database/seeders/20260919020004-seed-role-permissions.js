@@ -2,11 +2,15 @@
 
 const { ROLES, PERMISSIONS } = require('../../constants/auth.constants');
 
-// ADMIN gets every seeded permission; EMPLOYEE gets none for now - there's no
-// employee-facing restricted action yet (see DECISIONS.md Q33). Extend the
-// `grants` map below as real permissions are added.
+// A fixed snapshot of the 3 permissions this seeder grants - NOT
+// `Object.values(PERMISSIONS)` (see the note in 20260919020003-seed-permissions.js
+// for why reading the live, growing enum here would double-grant permissions
+// a later seeder, e.g. 20260919020006-seed-team-permissions.js, already owns).
+// EMPLOYEE gets none for now - there's no employee-facing restricted action
+// yet (see DECISIONS.md Q33). A later feature's own permissions get their
+// own new seeder, not an edit to this one.
 const grants = {
-  [ROLES.ADMIN]: Object.values(PERMISSIONS),
+  [ROLES.ADMIN]: [PERMISSIONS.USER_MANAGE, PERMISSIONS.ROLE_MANAGE, PERMISSIONS.SESSION_MANAGE],
   [ROLES.EMPLOYEE]: [],
 };
 

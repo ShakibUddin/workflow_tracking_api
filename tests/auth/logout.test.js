@@ -41,6 +41,19 @@ describe('POST /auth/logout', () => {
     expect(res.status).toBe(204);
   });
 
+  it('calling logout twice with the same refresh token is a safe no-op the second time', async () => {
+    // findByHashForUpdate matches by hash alone, with no status filter, so a
+    // second logout still finds the (already-revoked) token/family - this
+    // exercises #revokeFamilyCascade's guard against re-revoking a session
+    // that a previous call already revoked.
+    const { cookies } = await signup();
+    const first = await logout(cookies.refreshToken);
+    expect(first.res.status).toBe(204);
+
+    const second = await logout(cookies.refreshToken);
+    expect(second.res.status).toBe(204);
+  });
+
   it('only revokes the targeted session, leaving the user account and other sessions untouched', async () => {
     const { payload, cookies: session1 } = await signup();
     const { cookies: session2 } = await signin({ email: payload.email, password: payload.password });
