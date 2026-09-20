@@ -39,6 +39,9 @@ if (env !== 'production' && env !== 'test') {
         format.printf(({ timestamp, level, message, stack, ...meta }) => {
           // Prefer the captured stack trace over the bare message, and only
           // append extra metadata (e.g. request path) when it's actually present.
+          // istanbul ignore next -- `meta` always has at least `service` from
+          // `defaultMeta` above, so the empty-metadata branch is unreachable
+          // as configured; kept as a guard in case defaultMeta is ever removed.
           const rest = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
           return `${timestamp} [${level}]: ${stack || message}${rest}`;
         })

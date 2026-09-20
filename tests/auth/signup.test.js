@@ -89,4 +89,22 @@ describe('POST /auth/signup', () => {
     const [roleRows] = await sequelize.query('SELECT name FROM roles');
     expect(roleRows.map((r) => r.name).sort()).toEqual(['ADMIN', 'EMPLOYEE']);
   });
+
+  it('returns 500 when the ACTIVE USER_STATUS lookup seed is missing', async () => {
+    const [[row]] = await sequelize.query("SELECT id, label FROM lookup WHERE type = 'USER_STATUS' AND value = 'ACTIVE'");
+    await sequelize.query(`DELETE FROM lookup WHERE id = ${row.id}`);
+
+    try {
+      const { res } = await signup();
+      expect(res.status).toBe(500);
+    } finally {
+      // Restore the seed row so later tests in this file (and this database)
+      // aren't left without it - lookup/roles are seeded once by globalSetup
+      // and never truncated between tests (see tests/helpers/db.js).
+      await sequelize.query(`
+        INSERT INTO lookup (type, label, value, created_at, updated_at)
+        VALUES ('USER_STATUS', '${row.label}', 'ACTIVE', NOW(), NOW())
+      `);
+    }
+  });
 });

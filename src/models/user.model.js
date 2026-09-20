@@ -52,6 +52,12 @@ module.exports = (sequelize, DataTypes) => {
       otherKey: 'roleId',
     });
     User.belongsTo(models.Lookup, { as: 'statusInfo', foreignKey: 'status' });
+    User.belongsToMany(models.Team, {
+      through: models.UserTeam,
+      as: 'teams',
+      foreignKey: 'userId',
+      otherKey: 'teamId',
+    });
     // Refresh-token/session state lives on Session/TokenFamily/RefreshToken,
     // not on User - see src/services/token.service.js.
     User.hasMany(models.Session, { as: 'sessions', foreignKey: 'userId' });

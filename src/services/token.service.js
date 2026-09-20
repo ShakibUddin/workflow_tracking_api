@@ -149,6 +149,10 @@ class TokenService {
       await sessionRepository.touch(session, sessionExpiryFromNow(), { transaction });
 
       const user = await userRepository.findById(family.userId, { transaction });
+      /* istanbul ignore next -- defensive guard: unreachable under the current schema, since
+       * users.id -> sessions/token_families/refresh_tokens all cascade-delete (see the
+       * create-sessions/create-token-families migrations), so a user can never be missing
+       * while its family/session/token still resolve. Kept in case that constraint changes. */
       if (!user) {
         return { error: ApiError.unauthorized('User no longer exists') };
       }
